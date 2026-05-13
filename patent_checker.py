@@ -8,7 +8,7 @@ from fpdf import FPDF
 
 st.set_page_config(page_title="Advanced Patent Suite", page_icon="🛡️", layout="wide")
 
-ENCODED_GEMINI_KEY = "QUl6YVN5QTVWU05jM3YzWFBybjUxbUhrWDNXaFZlRjYwc1dsaDhR"
+ENCODED_GEMINI_KEY = "QUl6YVN5Q1pnUXlVVnR5d2NpZEhKNGpDS1h2NmRTSlZNV1dMc2xN"
 MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.0-flash-lite"]
 
 
