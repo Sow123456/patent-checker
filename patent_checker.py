@@ -1,13 +1,15 @@
 import base64
 import json
+import time
 import streamlit as st
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted, TooManyRequests, GoogleAPICallError
 from fpdf import FPDF
 
 st.set_page_config(page_title="Advanced Patent Suite", page_icon="🛡️", layout="wide")
 
-# Encoded fallback Gemini API key (base64 obfuscation, not strong encryption)
 ENCODED_GEMINI_KEY = "QUl6YVN5QTVWU05jM3YzWFBybjUxbUhrWDNXaFZlRjYwc1dsaDhR"
+MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.0-flash-lite"]
 
 
 def get_gemini_key():
@@ -44,9 +46,31 @@ def create_pdf_report(data, invention_name):
     return bytes(pdf.output())
 
 
+def parse_json_response(text, invention_desc):
+    cleaned = text.strip().replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {
+            "novelty_score": "N/A",
+            "risk_level": "Unknown",
+            "trl_level": "N/A",
+            "analysis": cleaned or f"Unable to parse structured response for: {invention_desc[:500]}"
+        }
+
+
+def generate_with_retry(model, prompt, retries=2, delay=4):
+    for attempt in range(retries + 1):
+        try:
+            return model.generate_content(prompt)
+        except (ResourceExhausted, TooManyRequests):
+            if attempt == retries:
+                raise
+            time.sleep(delay * (attempt + 1))
+
+
 def perform_advanced_analysis(invention_desc, gemini_key):
     genai.configure(api_key=gemini_key)
-    model = genai.GenerativeModel("gemini-2.0-flash-lite")
     prompt = f'''
 Return ONLY valid JSON:
 {{
@@ -56,9 +80,18 @@ Return ONLY valid JSON:
   "analysis": "Analyze this invention in detail: {invention_desc}"
 }}
 '''
-    response = model.generate_content(prompt)
-    text = response.text.strip().replace("```json", "").replace("```", "")
-    return json.loads(text)
+
+    last_error = None
+    for model_name in MODEL_CANDIDATES:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = generate_with_retry(model, prompt)
+            return parse_json_response(response.text, invention_desc)
+        except (ResourceExhausted, TooManyRequests, GoogleAPICallError) as exc:
+            last_error = exc
+            continue
+
+    raise last_error if last_error else RuntimeError("Analysis failed")
 
 
 st.title("🔍 Advanced Patent Novelty & Filing Suite")
@@ -70,22 +103,29 @@ if st.button("Execute Analysis"):
     if not invention_desc.strip():
         st.warning("Please enter the invention description.")
     else:
-        with st.spinner("Analyzing..."):
-            gemini_key = get_gemini_key()
-            result = perform_advanced_analysis(invention_desc, gemini_key)
+        try:
+            with st.spinner("Analyzing..."):
+                gemini_key = get_gemini_key()
+                result = perform_advanced_analysis(invention_desc, gemini_key)
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Novelty Score", f"{result.get('novelty_score', 'N/A')}%")
-        col2.metric("Risk Level", result.get("risk_level", "N/A"))
-        col3.metric("TRL Level", result.get("trl_level", "N/A"))
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Novelty Score", f"{result.get('novelty_score', 'N/A')}%")
+            col2.metric("Risk Level", result.get("risk_level", "N/A"))
+            col3.metric("TRL Level", result.get("trl_level", "N/A"))
 
-        st.subheader("Analysis")
-        st.write(result.get("analysis", "N/A"))
+            st.subheader("Analysis")
+            st.write(result.get("analysis", "N/A"))
 
-        pdf_data = create_pdf_report(result, invention_title or "Unnamed Invention")
-        st.download_button(
-            label="Download PDF Report",
-            data=pdf_data,
-            file_name="patent_report.pdf",
-            mime="application/pdf"
-        )
+            pdf_data = create_pdf_report(result, invention_title or "Unnamed Invention")
+            st.download_button(
+                label="Download PDF Report",
+                data=pdf_data,
+                file_name="patent_report.pdf",
+                mime="application/pdf"
+            )
+        except ResourceExhausted:
+            st.error("Gemini API quota has been exhausted for this key. Please wait and try again later, switch to a different API key, or upgrade the quota for the key in use.")
+        except TooManyRequests:
+            st.error("Too many requests were sent to Gemini in a short time. Please wait a moment and retry.")
+        except Exception as exc:
+            st.error(f"Analysis failed: {exc}")
