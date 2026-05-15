@@ -21,8 +21,16 @@ st.markdown("""
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("🛡️ Suite Config")
-    default_gemini = st.secrets.get("general", {}).get("gemini_key", "")
-    gemini_key = st.text_input("Gemini API Key", value=default_gemini, type="password")
+    
+    # Priority 1: Check for Shared/Master Key in Streamlit Secrets
+    shared_key = st.secrets.get("general", {}).get("gemini_key", "")
+    
+    if shared_key:
+        st.success("✅ Using Global Suite Key")
+        gemini_key = shared_key
+    else:
+        st.info("No shared key found. Please provide your own.")
+        gemini_key = st.text_input("Gemini API Key", type="password")
     
     st.markdown("---")
     language = st.selectbox("🌍 Analysis Language", ["English", "Hindi", "Spanish", "French", "German", "Chinese"])
